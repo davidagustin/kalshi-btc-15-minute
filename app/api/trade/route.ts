@@ -4,6 +4,14 @@ import { createAllModels, resetModel } from '@/lib/models';
 import { loadModelsFromDb, saveAllModelsToDb, initializeModelsInDb, savePerformanceHistory } from '@/lib/db';
 import { fetchMarketData, generateHistoricalData } from '@/lib/marketData';
 
+function isReadOnlyMode(request: Request): boolean {
+  const hostname = request.headers.get('host') || '';
+  return (
+    hostname.includes('kalshi-btc-15-minute.vercel.app') ||
+    process.env.NEXT_PUBLIC_READ_ONLY === 'true'
+  );
+}
+
 async function getEngine(): Promise<PaperTradingEngine> {
   const currentDate = new Date().toDateString();
   
@@ -51,6 +59,13 @@ async function getEngine(): Promise<PaperTradingEngine> {
 }
 
 export async function POST(request: Request) {
+  if (isReadOnlyMode(request)) {
+    return NextResponse.json(
+      { error: 'Read-only mode: Trading is disabled in production' },
+      { status: 403 }
+    );
+  }
+
   try {
     const engine = await getEngine();
     const marketData = await fetchMarketData();

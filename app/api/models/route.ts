@@ -3,6 +3,14 @@ import { createAllModels, resetModel } from '@/lib/models';
 import { loadModelsFromDb, saveAllModelsToDb, initializeModelsInDb, savePerformanceHistory } from '@/lib/db';
 import { TradingModel } from '@/types/trading';
 
+function isReadOnlyMode(request: Request): boolean {
+  const hostname = request.headers.get('host') || '';
+  return (
+    hostname.includes('kalshi-btc-15-minute.vercel.app') ||
+    process.env.NEXT_PUBLIC_READ_ONLY === 'true'
+  );
+}
+
 export async function GET() {
   try {
     // Load models from database
@@ -57,6 +65,13 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  if (isReadOnlyMode(request)) {
+    return NextResponse.json(
+      { error: 'Read-only mode: Model resets are disabled in production' },
+      { status: 403 }
+    );
+  }
+
   try {
     const { action } = await request.json();
 

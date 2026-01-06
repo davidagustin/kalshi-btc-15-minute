@@ -11,6 +11,12 @@ export default function Home() {
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [performanceHistory, setPerformanceHistory] = useState<{ time: string; [key: string]: string | number }[]>([]);
   const [trainingStatus, setTrainingStatus] = useState<string | null>(null);
+  
+  // Check if we're in read-only mode (production)
+  const isReadOnly = typeof window !== 'undefined' && (
+    window.location.hostname === 'kalshi-btc-15-minute.vercel.app' ||
+    process.env.NEXT_PUBLIC_READ_ONLY === 'true'
+  );
 
   const fetchModels = async () => {
     try {
@@ -142,6 +148,12 @@ export default function Home() {
           </p>
         </div>
 
+        {isReadOnly && (
+          <div className="mb-6 p-4 rounded-lg bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200 border border-yellow-300 dark:border-yellow-700">
+            <strong>Read-Only Mode:</strong> This is a production view. Trading, training, and reset actions are disabled.
+          </div>
+        )}
+
         {trainingStatus && (
           <div className={`mb-6 p-4 rounded-lg ${
             trainingStatus.includes('complete') 
@@ -154,49 +166,51 @@ export default function Home() {
           </div>
         )}
 
-        <div className="mb-6 flex gap-4 flex-wrap">
-          <button
-            onClick={() => setIsTrading(!isTrading)}
-            className={`px-6 py-3 rounded-lg font-semibold transition-colors ${
-              isTrading
-                ? 'bg-red-500 hover:bg-red-600 text-white'
-                : 'bg-green-500 hover:bg-green-600 text-white'
-            }`}
-          >
-            {isTrading ? 'Stop Trading' : 'Start Trading'}
-          </button>
-          <button
-            onClick={executeTrade}
-            className="px-6 py-3 rounded-lg font-semibold bg-blue-500 hover:bg-blue-600 text-white transition-colors"
-          >
-            Execute Single Trade
-          </button>
-          <button
-            onClick={() => trainModels(7)}
-            disabled={isTraining}
-            className="px-6 py-3 rounded-lg font-semibold bg-purple-500 hover:bg-purple-600 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isTraining ? 'Training...' : 'Train on 7 Days'}
-          </button>
-          <button
-            onClick={() => trainModels(30)}
-            disabled={isTraining}
-            className="px-6 py-3 rounded-lg font-semibold bg-indigo-500 hover:bg-indigo-600 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isTraining ? 'Training...' : 'Train on 30 Days'}
-          </button>
-          <button
-            onClick={resetModels}
-            className="px-6 py-3 rounded-lg font-semibold bg-orange-500 hover:bg-orange-600 text-white transition-colors"
-          >
-            Reset All Models
-          </button>
-          {lastUpdate && (
-            <div className="px-6 py-3 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 flex items-center">
-              Last update: {lastUpdate.toLocaleTimeString()}
-            </div>
-          )}
-        </div>
+        {!isReadOnly && (
+          <div className="mb-6 flex gap-4 flex-wrap">
+            <button
+              onClick={() => setIsTrading(!isTrading)}
+              className={`px-6 py-3 rounded-lg font-semibold transition-colors ${
+                isTrading
+                  ? 'bg-red-500 hover:bg-red-600 text-white'
+                  : 'bg-green-500 hover:bg-green-600 text-white'
+              }`}
+            >
+              {isTrading ? 'Stop Trading' : 'Start Trading'}
+            </button>
+            <button
+              onClick={executeTrade}
+              className="px-6 py-3 rounded-lg font-semibold bg-blue-500 hover:bg-blue-600 text-white transition-colors"
+            >
+              Execute Single Trade
+            </button>
+            <button
+              onClick={() => trainModels(7)}
+              disabled={isTraining}
+              className="px-6 py-3 rounded-lg font-semibold bg-purple-500 hover:bg-purple-600 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isTraining ? 'Training...' : 'Train on 7 Days'}
+            </button>
+            <button
+              onClick={() => trainModels(30)}
+              disabled={isTraining}
+              className="px-6 py-3 rounded-lg font-semibold bg-indigo-500 hover:bg-indigo-600 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isTraining ? 'Training...' : 'Train on 30 Days'}
+            </button>
+            <button
+              onClick={resetModels}
+              className="px-6 py-3 rounded-lg font-semibold bg-orange-500 hover:bg-orange-600 text-white transition-colors"
+            >
+              Reset All Models
+            </button>
+            {lastUpdate && (
+              <div className="px-6 py-3 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 flex items-center">
+                Last update: {lastUpdate.toLocaleTimeString()}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Performance Chart */}
         {performanceHistory.length > 0 && (

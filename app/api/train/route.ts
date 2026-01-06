@@ -4,11 +4,26 @@ import { PaperTradingEngine } from '@/lib/tradingEngine';
 import { createAllModels } from '@/lib/models';
 import { saveAllModelsToDb } from '@/lib/db';
 
+function isReadOnlyMode(request: Request): boolean {
+  const hostname = request.headers.get('host') || '';
+  return (
+    hostname.includes('kalshi-btc-15-minute.vercel.app') ||
+    process.env.NEXT_PUBLIC_READ_ONLY === 'true'
+  );
+}
+
 /**
  * Training endpoint that uses historical data from fxverify.com
  * to train the models on past market conditions
  */
 export async function POST(request: Request) {
+  if (isReadOnlyMode(request)) {
+    return NextResponse.json(
+      { error: 'Read-only mode: Training is disabled in production' },
+      { status: 403 }
+    );
+  }
+
   try {
     const { days = 7, barsPerDay = 96 } = await request.json().catch(() => ({}));
     
