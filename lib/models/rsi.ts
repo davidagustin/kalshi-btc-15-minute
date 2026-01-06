@@ -33,18 +33,41 @@ export function createRSIModel(): TradingModel {
       dailyReturn: 0,
     },
     makeDecision: async (marketData: MarketData, history: MarketData[]) => {
-      if (history.length < 15) {
+      // Use 1-minute candlesticks if available for more accurate RSI
+      let prices: number[] = [];
+      
+      if (marketData.minuteCandles && marketData.minuteCandles.length > 0) {
+        // Use 1-minute candle closes for RSI calculation
+        prices = marketData.minuteCandles.map(c => c.close);
+        
+        // Include recent history's minute candles (need at least 14 periods for RSI)
+        for (const h of history.slice(-5)) {
+          if (h.minuteCandles && h.minuteCandles.length > 0) {
+            prices.push(...h.minuteCandles.map(c => c.close));
+          } else {
+            prices.push(h.currentPrice);
+          }
+        }
+      } else {
+        // Fallback to 15-minute periods
+        if (history.length < 15) {
+          return { action: 'HOLD' };
+        }
+        prices = history.map(d => d.currentPrice);
+        prices.push(marketData.currentPrice);
+      }
+
+      if (prices.length < 15) {
         return { action: 'HOLD' };
       }
 
-      const prices = history.map(d => d.currentPrice);
       const rsi = calculateRSI(prices);
 
-      // RSI > 70: overbought, bet price goes down
+      // RSI > 70: overbought, bet price goes down in next 15 min
       if (rsi > 70) {
         return { action: 'BUY_NO', quantity: 5 };
       }
-      // RSI < 30: oversold, bet price goes up
+      // RSI < 30: oversold, bet price goes up in next 15 min
       else if (rsi < 30) {
         return { action: 'BUY_YES', quantity: 5 };
       }

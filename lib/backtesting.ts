@@ -1,5 +1,6 @@
-import { TradingModel, MarketData, Trade } from '@/types/trading';
+import { TradingModel, MarketData, Trade, Candlestick } from '@/types/trading';
 import { PaperTradingEngine } from './tradingEngine';
+import { fetch1MinuteMarketData } from './fxverify';
 
 export interface BacktestResult {
   modelId: string;
@@ -39,16 +40,22 @@ export interface BacktestSummary {
 }
 
 /**
- * Runs backtesting on models using historical data
+ * Runs backtesting on models using 1-minute candlesticks to predict 15-minute price movements
  * Simulates Kalshi-style binary betting (UP/DOWN) on 15-minute intervals
  */
 export async function runBacktest(
   models: TradingModel[],
   historicalData: MarketData[],
-  initialBalance: number = 100
+  initialBalance: number = 100,
+  use1MinuteData: boolean = true
 ): Promise<BacktestSummary> {
   if (historicalData.length < 20) {
     throw new Error('Insufficient historical data for backtesting (need at least 20 bars)');
+  }
+  
+  // If using 1-minute data, ensure we have minute candles for each period
+  if (use1MinuteData && historicalData.some(d => !d.minuteCandles || d.minuteCandles.length === 0)) {
+    console.warn('Some periods missing 1-minute candles, using aggregated data only');
   }
 
   const results: BacktestResult[] = [];
@@ -78,16 +85,68 @@ export async function runBacktest(
     let maxDrawdownPercent = 0;
 
     // Run backtest through historical data
+    // Each iteration represents a 15-minute period
     for (let i = batchSize; i < historicalData.length; i++) {
-      const currentData = historicalData[i];
+      const periodStart = historicalData[i];
       const history = historicalData.slice(Math.max(0, i - batchSize), i);
+      
+      // Build history with 1-minute granularity if available
+      let detailedHistory = history;
+      if (use1MinuteData && periodStart.minuteCandles && periodStart.minuteCandles.length > 0) {
+        // Create MarketData from 1-minute candles for more granular history
+        const minuteHistory: MarketData[] = [];
+        for (let j = Math.max(0, i - batchSize); j < i; j++) {
+          const period = historicalData[j];
+          if (period.minuteCandles && period.minuteCandles.length > 0) {
+            // Add each 1-minute candle as a data point
+            for (const candle of period.minuteCandles) {
+              const priceChange = minuteHistory.length > 0
+                ? ((candle.close - minuteHistory[minuteHistory.length - 1].currentPrice) / minuteHistory[minuteHistory.length - 1].currentPrice) * 100
+                : 0;
+              const yesPrice = Math.max(1, Math.min(99, 50 + (priceChange * 10)));
+              minuteHistory.push({
+                timestamp: candle.timestamp,
+                currentPrice: Math.round(candle.close),
+                yesPrice: Math.round(yesPrice * 100) / 100,
+                noPrice: Math.round((100 - yesPrice) * 100) / 100,
+                volume: candle.volume,
+                minuteCandles: [candle],
+              });
+            }
+          } else {
+            minuteHistory.push(period);
+          }
+        }
+        detailedHistory = minuteHistory;
+      }
 
-      // Execute trading decision
-      await engine.executeTradingCycle(currentData, history);
+      // Make trading decision at the START of the 15-minute period
+      // Use 1-minute candles from previous periods + current period start
+      const decisionData = periodStart;
+      await engine.executeTradingCycle(decisionData, detailedHistory);
 
-      // Settle positions every 4 bars (1 hour) to simulate realistic settlement
-      if (i % 4 === 0 && i > batchSize) {
-        engine.settlePositions(currentData);
+      // Settle positions at the END of the 15-minute period
+      // Check if price went UP or DOWN during this period
+      if (i < historicalData.length - 1) {
+        const periodEnd = historicalData[i + 1];
+        const startPrice = periodStart.currentPrice;
+        const endPrice = periodEnd.currentPrice;
+        const priceChange = endPrice - startPrice;
+        const priceChangePercent = (priceChange / startPrice) * 100;
+        
+        // Create settlement data based on actual outcome
+        const settlementData: MarketData = {
+          ...periodEnd,
+          // If price went up, YES wins (settles at 100), NO loses (settles at 0)
+          // If price went down, NO wins (settles at 100), YES loses (settles at 0)
+          yesPrice: priceChangePercent > 0 ? 100 : 0,
+          noPrice: priceChangePercent <= 0 ? 100 : 0,
+        };
+        
+        engine.settlePositions(settlementData);
+      } else {
+        // Final period - settle with last known price
+        engine.settlePositions(periodStart);
       }
 
       // Track balance history
@@ -142,44 +201,54 @@ export async function runBacktest(
     let totalWins = 0;
     let totalLosses = 0;
 
-    // Estimate win/loss by checking if subsequent price movement matched the trade direction
+    // Calculate win/loss based on 15-minute period outcomes
+    // Each trade is made at the START of a 15-minute period
+    // Settlement happens at the END of that same period
     for (let i = 0; i < trades.length; i++) {
       const trade = trades[i];
       const tradeIndex = historicalData.findIndex(
-        d => Math.abs(d.timestamp.getTime() - trade.timestamp.getTime()) < 60000 // Within 1 minute
+        d => Math.abs(d.timestamp.getTime() - trade.timestamp.getTime()) < 900000 // Within 15 minutes
       );
 
       if (tradeIndex >= 0 && tradeIndex < historicalData.length - 1) {
-        const entryData = historicalData[tradeIndex];
-        // Check price movement over next 4 bars (1 hour settlement period)
-        const settlementIndex = Math.min(tradeIndex + 4, historicalData.length - 1);
-        const settlementData = historicalData[settlementIndex];
+        const periodStart = historicalData[tradeIndex];
+        const periodEnd = historicalData[tradeIndex + 1]; // Next 15-minute period is the settlement
         
-        // Determine if trade was profitable based on price direction
-        const priceChange = settlementData.currentPrice - entryData.currentPrice;
-        const priceChangePercent = (priceChange / entryData.currentPrice) * 100;
+        // Calculate price change during the 15-minute period
+        const startPrice = periodStart.currentPrice;
+        const endPrice = periodEnd.currentPrice;
+        const priceChange = endPrice - startPrice;
+        const priceChangePercent = (priceChange / startPrice) * 100;
+        
+        // For Kalshi binary markets:
+        // - BUY_YES wins if price goes UP (endPrice > startPrice)
+        // - BUY_NO wins if price goes DOWN (endPrice < startPrice)
+        // - Need a minimum threshold to avoid noise (0.01% = $5 on $50k BTC)
+        const threshold = 0.01; // 0.01% minimum movement
         
         let isWin = false;
         if (trade.direction === 'UP') {
-          // Win if price went up
-          isWin = priceChangePercent > 0.1; // At least 0.1% increase
+          // Win if price went up by at least the threshold
+          isWin = priceChangePercent > threshold;
         } else {
-          // Win if price went down
-          isWin = priceChangePercent < -0.1; // At least 0.1% decrease
+          // Win if price went down by at least the threshold
+          isWin = priceChangePercent < -threshold;
         }
 
         if (isWin) {
           winningTrades++;
-          // Profit = (100 - entry_price) * quantity (Kalshi pays $1 per winning share)
+          // Profit = (100 - entry_price) * quantity
+          // Kalshi pays $1 per winning share, so profit is (100 - entry_price) cents per share
           const profit = (100 - trade.price) * trade.quantity;
           totalWins += profit;
         } else {
           losingTrades++;
-          // Loss = entry cost (you lose what you paid)
+          // Loss = entry cost (you lose what you paid for the shares)
           totalLosses += trade.cost;
         }
       } else {
-        // If we can't find the trade in history, assume it's a loss
+        // If we can't find the trade in history, check if it's in the final period
+        // For final period trades, we can't determine outcome, so mark as loss
         losingTrades++;
         totalLosses += trade.cost;
       }

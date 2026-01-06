@@ -139,6 +139,111 @@ export async function fetchCurrentMarketData(): Promise<MarketData> {
 }
 
 /**
+ * Fetches 1-minute candlesticks for a given time period
+ */
+export async function fetch1MinuteCandles(
+  symbol: string = 'IC Markets:BTCUSD',
+  from?: number,
+  to?: number,
+  countback: number = 1000
+): Promise<FxVerifyBar[]> {
+  return fetchFxVerifyBars(symbol, 1, from, to, countback);
+}
+
+/**
+ * Aggregates 1-minute candlesticks into 15-minute periods
+ */
+export function aggregateTo15Minutes(minuteBars: FxVerifyBar[]): FxVerifyBar[] {
+  const aggregated: FxVerifyBar[] = [];
+  const periodMs = 15 * 60 * 1000; // 15 minutes in milliseconds
+
+  let currentPeriod: FxVerifyBar | null = null;
+  let periodStartTime = 0;
+
+  for (const bar of minuteBars) {
+    const barTime = bar.time * 1000; // Convert to milliseconds
+    const periodTime = Math.floor(barTime / periodMs) * periodMs;
+    const periodTimestamp = Math.floor(periodTime / 1000); // Back to seconds
+
+    if (!currentPeriod || periodStartTime !== periodTimestamp) {
+      // Start new 15-minute period
+      if (currentPeriod) {
+        aggregated.push(currentPeriod);
+      }
+      currentPeriod = {
+        time: periodTimestamp,
+        open: bar.open,
+        high: bar.high,
+        low: bar.low,
+        close: bar.close,
+        volume: bar.volume,
+      };
+      periodStartTime = periodTimestamp;
+    } else {
+      // Aggregate into current period
+      if (currentPeriod) {
+        currentPeriod.high = Math.max(currentPeriod.high, bar.high);
+        currentPeriod.low = Math.min(currentPeriod.low, bar.low);
+        currentPeriod.close = bar.close; // Last close price
+        currentPeriod.volume += bar.volume;
+      }
+    }
+  }
+
+  // Add final period
+  if (currentPeriod) {
+    aggregated.push(currentPeriod);
+  }
+
+  return aggregated;
+}
+
+/**
+ * Fetches 1-minute candlesticks and converts to MarketData with minute-level detail
+ */
+export async function fetch1MinuteMarketData(
+  minutes: number = 1000
+): Promise<{ minuteCandles: FxVerifyBar[]; marketData: MarketData[] }> {
+  try {
+    // Fetch 1-minute candlesticks
+    const minuteBars = await fetch1MinuteCandles('IC Markets:BTCUSD', undefined, undefined, minutes);
+    
+    // Aggregate to 15-minute periods for market data
+    const aggregatedBars = aggregateTo15Minutes(minuteBars);
+    const marketData = convertFxVerifyBarsToMarketData(aggregatedBars);
+    
+    // Attach 1-minute candles to each 15-minute period
+    const periodMs = 15 * 60 * 1000;
+    for (let i = 0; i < marketData.length; i++) {
+      const periodStart = marketData[i].timestamp.getTime();
+      const periodEnd = periodStart + periodMs;
+      
+      const periodMinutes = minuteBars.filter(bar => {
+        const barTime = bar.time * 1000;
+        return barTime >= periodStart && barTime < periodEnd;
+      });
+      
+      marketData[i].minuteCandles = periodMinutes.map(bar => ({
+        timestamp: new Date(bar.time * 1000),
+        open: bar.open,
+        high: bar.high,
+        low: bar.low,
+        close: bar.close,
+        volume: bar.volume,
+      }));
+    }
+    
+    return {
+      minuteCandles: minuteBars,
+      marketData,
+    };
+  } catch (error) {
+    console.error('Error fetching 1-minute market data:', error);
+    throw error;
+  }
+}
+
+/**
  * Fetches historical market data for training
  */
 export async function fetchHistoricalMarketData(count: number = 100): Promise<MarketData[]> {

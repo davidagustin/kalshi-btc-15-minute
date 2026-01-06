@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createAllModels } from '@/lib/models';
 import { runBacktest } from '@/lib/backtesting';
-import { convertFxVerifyBarsToMarketData, fetchFxVerifyBars } from '@/lib/fxverify';
+import { fetch1MinuteMarketData, convertFxVerifyBarsToMarketData, fetchFxVerifyBars } from '@/lib/fxverify';
 import { generateHistoricalData } from '@/lib/marketData';
 
 function isReadOnlyMode(request: Request): boolean {
@@ -26,23 +26,37 @@ export async function POST(request: Request) {
   try {
     const { days = 30, barsPerDay = 96, initialBalance = 100 } = await request.json().catch(() => ({}));
     
-    // Calculate number of bars to fetch (15-minute intervals)
-    const totalBars = days * barsPerDay;
+    // Calculate number of 15-minute periods and 1-minute candles needed
+    const total15MinBars = days * barsPerDay;
+    const totalMinutes = days * 24 * 60; // Total minutes in the period
     
-    console.log(`Running backtest with ${totalBars} bars (${days} days of data)`);
+    console.log(`Running backtest with 1-minute candlesticks predicting 15-minute movements`);
+    console.log(`Fetching ${totalMinutes} minutes of data (${days} days)`);
     
-    // Fetch historical data from fxverify
+    // Fetch 1-minute candlesticks and aggregate to 15-minute periods
     let historicalData;
     try {
-      const bars = await fetchFxVerifyBars('IC Markets:BTCUSD', 15, undefined, undefined, totalBars);
-      if (bars.length === 0) {
+      const { marketData } = await fetch1MinuteMarketData(totalMinutes);
+      if (marketData.length === 0) {
         throw new Error('No data from fxverify');
       }
-      historicalData = convertFxVerifyBarsToMarketData(bars);
+      historicalData = marketData;
+      console.log(`Fetched ${historicalData.length} 15-minute periods with 1-minute granularity`);
     } catch (error) {
-      console.warn('Failed to fetch from fxverify, using simulated data:', error);
-      // Fallback to simulated data
-      historicalData = await generateHistoricalData(totalBars);
+      console.warn('Failed to fetch 1-minute data from fxverify, trying 15-minute data:', error);
+      try {
+        // Fallback to 15-minute bars directly
+        const bars = await fetchFxVerifyBars('IC Markets:BTCUSD', 15, undefined, undefined, total15MinBars);
+        if (bars.length === 0) {
+          throw new Error('No data from fxverify');
+        }
+        historicalData = convertFxVerifyBarsToMarketData(bars);
+        console.log(`Using 15-minute aggregated data (no 1-minute granularity)`);
+      } catch (fallbackError) {
+        console.warn('Failed to fetch from fxverify, using simulated data:', fallbackError);
+        // Final fallback to simulated data
+        historicalData = await generateHistoricalData(total15MinBars);
+      }
     }
     
     if (historicalData.length < 20) {
@@ -55,8 +69,9 @@ export async function POST(request: Request) {
     // Create all models
     const models = createAllModels();
     
-    // Run backtest
-    const backtestResults = await runBacktest(models, historicalData, initialBalance);
+    // Run backtest with 1-minute candlestick support
+    const has1MinuteData = historicalData.some(d => d.minuteCandles && d.minuteCandles.length > 0);
+    const backtestResults = await runBacktest(models, historicalData, initialBalance, has1MinuteData);
     
     // Format results for response (exclude full trade history and balance history to reduce payload)
     const formattedResults = backtestResults.results.map(result => ({
@@ -112,6 +127,7 @@ export async function GET() {
         barsPerDay: 'Number of 15-minute bars per day (default: 96, which is 24 hours)',
         initialBalance: 'Starting balance for backtest (default: 100)',
       },
+      note: 'Uses 1-minute candlesticks to predict 15-minute price movements, matching Kalshi market structure',
     },
   });
 }

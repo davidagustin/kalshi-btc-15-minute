@@ -1,11 +1,22 @@
 export type MarketDirection = 'UP' | 'DOWN';
 
+export interface Candlestick {
+  timestamp: Date;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
 export interface MarketData {
   timestamp: Date;
   currentPrice: number;
   yesPrice: number; // Price to buy "YES" (price goes up)
   noPrice: number;  // Price to buy "NO" (price goes down)
   volume: number;
+  // Optional: 1-minute candlesticks for this period
+  minuteCandles?: Candlestick[];
 }
 
 export interface Trade {
