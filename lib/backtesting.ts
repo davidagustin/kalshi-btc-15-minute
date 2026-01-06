@@ -154,7 +154,7 @@ export async function runBacktest(
       if (currentModels.length > 0) {
         const currentBalance = currentModels[0].state.balance;
         balanceHistory.push({
-          timestamp: currentData.timestamp,
+          timestamp: periodStart.timestamp,
           balance: currentBalance,
         });
 
