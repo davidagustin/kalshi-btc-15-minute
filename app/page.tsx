@@ -8,9 +8,11 @@ export default function Home() {
   const [models, setModels] = useState<TradingModel[]>([]);
   const [isTrading, setIsTrading] = useState(false);
   const [isTraining, setIsTraining] = useState(false);
+  const [isBacktesting, setIsBacktesting] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [performanceHistory, setPerformanceHistory] = useState<{ time: string; [key: string]: string | number }[]>([]);
   const [trainingStatus, setTrainingStatus] = useState<string | null>(null);
+  const [backtestResults, setBacktestResults] = useState<any>(null);
   
   // Check if we're in read-only mode (production)
   const isReadOnly = typeof window !== 'undefined' && (
@@ -93,6 +95,32 @@ export default function Home() {
       }
     } catch (error) {
       console.error('Error resetting models:', error);
+    }
+  };
+
+  const runBacktest = async (days: number = 30) => {
+    setIsBacktesting(true);
+    setTrainingStatus('Running backtest on historical data...');
+    try {
+      const response = await fetch('/api/backtest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ days, barsPerDay: 96, initialBalance: 100 }),
+      });
+      const data = await response.json();
+      
+      if (data.success) {
+        setBacktestResults(data);
+        setTrainingStatus(`Backtest complete! Tested ${data.backtest.period.totalBars} bars over ${data.backtest.period.days} days.`);
+        setTimeout(() => setTrainingStatus(null), 8000);
+      } else {
+        setTrainingStatus(`Backtest failed: ${data.error}`);
+      }
+    } catch (error) {
+      console.error('Error running backtest:', error);
+      setTrainingStatus('Backtest failed. Please try again.');
+    } finally {
+      setIsBacktesting(false);
     }
   };
 
@@ -204,6 +232,20 @@ export default function Home() {
             >
               Reset All Models
             </button>
+            <button
+              onClick={() => runBacktest(30)}
+              disabled={isBacktesting}
+              className="px-6 py-3 rounded-lg font-semibold bg-teal-500 hover:bg-teal-600 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isBacktesting ? 'Backtesting...' : 'Backtest 30 Days'}
+            </button>
+            <button
+              onClick={() => runBacktest(90)}
+              disabled={isBacktesting}
+              className="px-6 py-3 rounded-lg font-semibold bg-cyan-500 hover:bg-cyan-600 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isBacktesting ? 'Backtesting...' : 'Backtest 90 Days'}
+            </button>
             {lastUpdate && (
               <div className="px-6 py-3 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 flex items-center">
                 Last update: {lastUpdate.toLocaleTimeString()}
@@ -236,6 +278,95 @@ export default function Home() {
                 ))}
               </LineChart>
             </ResponsiveContainer>
+          </div>
+        )}
+
+        {/* Backtest Results */}
+        {backtestResults && backtestResults.summary && (
+          <div className="mb-8 bg-white dark:bg-slate-800 rounded-lg shadow-lg p-6">
+            <h2 className="text-2xl font-bold text-slate-900 dark:text-slate-100 mb-4">
+              Backtest Results ({backtestResults.backtest.period.days} days)
+            </h2>
+            <div className="mb-4 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                <div>
+                  <div className="text-slate-600 dark:text-slate-400">Best Model</div>
+                  <div className="font-bold text-green-600 dark:text-green-400">
+                    {backtestResults.summary.bestModel?.name || 'N/A'}
+                  </div>
+                  <div className="text-xs text-slate-500">
+                    {backtestResults.summary.bestModel?.return?.toFixed(2)}% return
+                  </div>
+                </div>
+                <div>
+                  <div className="text-slate-600 dark:text-slate-400">Average Return</div>
+                  <div className="font-bold text-slate-900 dark:text-slate-100">
+                    {backtestResults.summary.averageReturn?.toFixed(2)}%
+                  </div>
+                </div>
+                <div>
+                  <div className="text-slate-600 dark:text-slate-400">Average Win Rate</div>
+                  <div className="font-bold text-slate-900 dark:text-slate-100">
+                    {backtestResults.summary.averageWinRate?.toFixed(1)}%
+                  </div>
+                </div>
+                <div>
+                  <div className="text-slate-600 dark:text-slate-400">Total Bars Tested</div>
+                  <div className="font-bold text-slate-900 dark:text-slate-100">
+                    {backtestResults.backtest.period.totalBars}
+                  </div>
+                </div>
+              </div>
+            </div>
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={backtestResults.backtest.results.map((r: any) => ({
+                name: r.modelName,
+                return: r.totalReturnPercent,
+                winRate: r.winRate,
+                sharpeRatio: r.sharpeRatio,
+              }))}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="name" angle={-45} textAnchor="end" height={80} />
+                <YAxis />
+                <Tooltip />
+                <Legend />
+                <Bar dataKey="return" fill="#3b82f6" name="Return (%)" />
+                <Bar dataKey="winRate" fill="#10b981" name="Win Rate (%)" />
+              </BarChart>
+            </ResponsiveContainer>
+            <div className="mt-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {backtestResults.backtest.results.map((result: any) => (
+                <div key={result.modelId} className="p-4 bg-slate-50 dark:bg-slate-700 rounded-lg">
+                  <h3 className="font-bold text-slate-900 dark:text-slate-100 mb-2">{result.modelName}</h3>
+                  <div className="space-y-1 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-slate-600 dark:text-slate-400">Return:</span>
+                      <span className={`font-semibold ${
+                        result.totalReturnPercent >= 0 ? 'text-green-600' : 'text-red-600'
+                      }`}>
+                        {result.totalReturnPercent.toFixed(2)}%
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-600 dark:text-slate-400">Win Rate:</span>
+                      <span className="font-semibold">{result.winRate.toFixed(1)}%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-600 dark:text-slate-400">Trades:</span>
+                      <span className="font-semibold">{result.totalTrades}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-600 dark:text-slate-400">Max Drawdown:</span>
+                      <span className="font-semibold text-red-600">{result.maxDrawdownPercent.toFixed(2)}%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-600 dark:text-slate-400">Sharpe Ratio:</span>
+                      <span className="font-semibold">{result.sharpeRatio.toFixed(2)}</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
