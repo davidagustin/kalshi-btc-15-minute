@@ -4,13 +4,18 @@ import { PaperTradingEngine } from '@/lib/tradingEngine';
 
 // This endpoint can be called by a cron job to reset models daily
 // For Vercel, you can set up a cron job in vercel.json
-export async function POST(request: Request) {
+async function handleRequest(request: Request) {
   try {
-    // Verify the request is from a cron job (add authentication in production)
+    // Verify the request is from Vercel cron or has valid auth
+    const cronHeader = request.headers.get('x-vercel-cron');
     const authHeader = request.headers.get('authorization');
     const cronSecret = process.env.CRON_SECRET;
     
-    if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+    // Allow Vercel cron (has x-vercel-cron header) or valid Bearer token
+    const isVercelCron = cronHeader !== null;
+    const hasValidAuth = cronSecret && authHeader === `Bearer ${cronSecret}`;
+    
+    if (!isVercelCron && !hasValidAuth && cronSecret) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -28,4 +33,12 @@ export async function POST(request: Request) {
       { status: 500 }
     );
   }
+}
+
+export async function GET(request: Request) {
+  return handleRequest(request);
+}
+
+export async function POST(request: Request) {
+  return handleRequest(request);
 }
